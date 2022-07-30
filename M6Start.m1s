@@ -1,4 +1,6 @@
-
+REM Author: Egemen Can Senkardes
+REM 2022
+REM This is my version of auto tool zero script. It speaks the tool name from the tool table and is modified to speed up the process.
 
 'Code "G90 G31 Z" &ZProbeSearch &" F" &ZFeedRate
 toolChangeX = 10
