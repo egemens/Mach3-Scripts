@@ -1,0 +1,287 @@
+
+
+'Code "G90 G31 Z" &ZProbeSearch &" F" &ZFeedRate
+toolChangeX = 10
+toolChangeY = 10
+toolChangeZ = 10
+
+probeLocationX = 50
+probeLocationY = 60
+
+tool = GetSelectedTool()
+SetCurrentTool( tool )
+
+REM EGEMEN EDIT
+
+Dim toolNumber As String
+toolNumber = CStr(tool)
+
+Dim toolName As String
+toolName = GetToolDesc(tool)
+
+
+
+' warn the user
+Speak("Please step back")
+
+
+REM RETRACT Z
+
+Code "G04 P1" 'Pause
+
+Code "G53 G00 Z-10" 'MOVE Z TO SAFE POS
+
+waitTillStopped()
+
+
+'toolchange position
+Code "G53 G00 X" & toolChangeX & " Y" & toolChangeY
+
+waitTillStopped()
+
+
+'call by toolnumber or toolname
+If toolName = "Empty" Then
+	Speak("Please insert tool number" & toolNumber)
+Else
+	Speak("Please insert" & toolName)
+End If
+
+
+'safety feature turn tool offset off
+If GetOemLed(28) = true Then
+	DoOEMButton(136)
+	Code "(Tool offset off)"
+	'MsgBox("offset off")
+End If
+
+
+'Return to initial parameters
+'CREATE A NO KEYBOARD MODE
+	'If selected, program will go into optional stop, and proceed with the button from Handheld controller
+
+Ret = MachMsg("Ready to Proceed?", "Warning", 1)
+
+If Ret = 1 Then
+    Ret2 = MachMsg("Zero the Tool?", "Warning", 1)
+    If Ret2 = 1 Then
+
+    REM AUTO ZERO CODE
+    
+MaterialOffsetOld  = GetVar(555) 'a feature to persist the material thickness. Variable 555 used to store material thickness
+MaterialOffsetInput  = InputBox("Enter Material Thickness offset          Hint: To probe from the Spoilboard surface, enter the nominal thickness of the material. Enter '0' or leave blank if probing from the material surface", "Material Offset", MaterialOffsetOld)  
+MaterialOffset  = Abs(MaterialOffsetInput) 'prevent entering negative values
+SetVar (555, MaterialOffset)
+
+ZMaxDepth = -205	'maximum probe distance to search a tool
+
+ZProbeSearch = -60 'Set the down Distance to find probe
+ZFeedRate = 250 'Set the down FeedRate
+RetractDistance = 10 'Set the retract Distance
+RetractFeedRate = 1000 'Set the retract FeedRate
+ProbeThickness = 19.70 'Enter Z-plate thickness here
+
+' Rapid down formula rapidDownTarget = ZMaxDepth + ProbeThickness + MaxToolHeight
+'MaxToolHeight is to prevent crashing long tools by rapiding into table
+
+
+'this reads tool height from the table. Speeds up the probing by rapid move
+If toolName = "Empty" Then
+	MaxToolHeight = 65
+Else
+	MaxToolHeight = GetToolParam(tool,2)
+End If
+
+
+SlowRetractDistance = 1 'Retract 1mm for a 2nd pass
+SlowZFeedRate = 25 'Set the slow down FeedRate for 2nd pass
+
+CurrentFeed = GetOemDRO(818) 'Get the current feedrate to return to later
+CurrentAbsInc = GetOemLED(48) 'Get the current G90/G91 state, 48 Coordinate mode abs / 49 Coordinate mode incremental
+CurrentGmode = GetOemDRO(819) 'Get the current G0/G1 state
+CurrentWorkOffsetNumber = GetOemDRO(46) 'Get the current work offset to return
+
+
+' warn the user
+Speak("Please step back")
+
+' RETRACT Z
+
+Code "G4 P1" 'Pause
+
+If GetABSPosition(0) > probeLocationX And GetABSPosition(1) > probeLocationY Then	'Retract Z if pendant not at probe X and Y
+	Code "G90 G53 G00 Z-10"
+
+	waitTillStopped()
+Else
+
+End If
+
+'go to probe point x,y coordinate
+Code "G90 G53 G00 X" & probeLocationX & " Y" & probeLocationY	'changed 03/10/21 old: Code "G90 G53 G00 X50 Y75"
+
+waitTillStopped()
+
+
+'rapid down to probe point
+rapidDownTarget = ZMaxDepth + ProbeThickness + MaxToolHeight
+Code "G90 G53 G00 Z" &rapidDownTarget
+
+waitTillStopped()
+
+
+
+' 1st Pass at fast rate
+
+Code "(Z axis 1st pass)" 'puts this message in the status bar	
+
+If GetOemLed (825) = 0 Then 'Status of Digitize Input - Check to see if the probe is already grounded or faulty
+	DoOEMButton (1010) 'zero the Z axis so we measure the distance pendant has traveled
+	'1010 - Work Z Zero
+	'Code "G4 P0.2" ' this delay gives me time to get from computer to hold probe in place
+
+    'Start the probing move
+	Code "G90 G31 Z" &ZProbeSearch &" F" &ZFeedRate 'probing move on axis z by "G31 Z"
+
+	waitTillStopped()
+    
+    
+    ZProbePos = GetOemDRO(802) 'get the exact point the probe was hit  802 - Multi-function DROs Machine/Work/DTG Z
+
+
+    'Check if we hit the probe
+	If Abs(ZprobePos) <= Abs(ZProbeSearch)-0.1 Then 'Check if the probe has been found
+
+		'Call SetOEMDRO (802, ProbeThickness - MaterialOffset) 'set the Z axis DRO to whatever is set as plate thickness less the offset value
+		'EGE UPDATE FOR MULTIPLE WORK OFFSETS
+			'BEGIN NOT SURE
+			Call SetOEMDRO (46, 1)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+			Call SetOEMDRO (46, 2)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+			Call SetOEMDRO (46, 3)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+			Call SetOEMDRO (46, 4)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+			Call SetOEMDRO (46, 5)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+			Call SetOEMDRO (46, 6)
+			Call SetOEMDRO (802, ProbeThickness - MaterialOffset)
+
+			'return to original work offset
+			Call SetOEMDRO (46, CurrentWorkOffsetNumber)
+
+			'END
+		Code "G4 P0.25" 'Pause for Dro to update.
+
+        'retract move
+		Code "G91 G1 Z" &SlowRetractDistance &" F" &RetractFeedRate 'retract
+		waitTillStopped()
+
+		Code "(Z axis 2nd pass)" 'puts this message in the status bar	
+	        Code "G90"
+    'we couldnt hit the probe
+	Else
+		Code "G90 G0 Z0" 'retract to start pos
+		waitTillStopped()
+
+		Code "(Z-Plate not found, check connection or Distance and try again)" 'puts this message in the status bar
+
+	End If
+
+'if Z probe is active already
+Else
+	Code "(Z-Plate is grounded, check connection and try again)" 'this goes in the status bar if aplicable
+
+End If
+
+
+'Return to initial parameters for safety
+
+Code "F" &CurrentFeed 'Returns to prior feed rate
+
+If CurrentAbsInc = 0 Then 'if G91 was in effect before then return to it
+	Code "G91"
+End If
+
+If CurrentGMode = 0 Then 'if G0 was in effect before then return to it
+	Code "G0"
+End If
+
+'Return to initial parameters for safety
+
+
+REM 2nd pass at slow rate
+
+If GetOemLed (825)=0 Then 'Check to see if the probe is already grounded or faulty
+	DoOEMButton (1010) 'zero the Z axis so the probe move will start from here
+
+    'slow search
+	Code "G90 G31 Z" &ZProbeSearch &" F" &SlowZFeedRate 'probing move
+	waitTillStopped()
+	ZProbePos = GetOemDRO(802) 'get the exact point the probe was hit
+
+	If Abs(ZprobePos) <= Abs(ZProbeSearch)-0.1 Then 'Check if the probe has been found
+
+
+		Call SetOEMDRO (802, ProbeThickness - MaterialOffset) 'set the Z axis DRO to whatever is set as plate thickness less the offset value
+
+		Code "G4 P0.25" 'Pause for Dro to update.
+
+		Code "G91 G1 Z" &RetractDistance &" F" &RetractFeedRate 'retract
+
+		'full retract
+		'Code "G90 G53 G00 Z-10"
+
+		waitTillStopped()
+
+		Code "(Z axis is now zeroed)" 'puts this message in the status bar
+		Code "G90"	
+
+	Else
+		Code "G90 G0 Z0" 'retract to start pos
+		waitTillStopped()
+		Code "(Z-Plate not found, check connection or Distance and try again)" 'puts this message in the status bar
+
+	End If
+
+Else
+	Code "(Z-Plate is grounded, check connection and try again)" 'this goes in the status bar if aplicable
+
+End If
+
+Code "F" &CurrentFeed 'Returns to prior feed rate
+
+If CurrentAbsInc = 0 Then 'if G91 was in effect before then return to it
+	Code "G91"
+End If
+
+If CurrentGMode = 0 Then 'if G0 was in effect before then return to it
+	Code "G0"
+End If
+        
+        Code "G53 G00 Z-10"
+
+		waitTillStopped()
+
+        Exit Sub      
+        
+    REM AUTO ZERO CODE
+
+    End If
+End If
+
+
+REM EGEMEN EDIT
+
+
+'******************************************************************************
+' This stops the gcode from continuing until movement has stopped
+'******************************************************************************
+Sub waitTillStopped()  'wait for machine to finish movement
+  While IsMoving()
+    Sleep(10)
+  Wend
+End Sub
+
+   
